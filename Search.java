@@ -40,6 +40,7 @@ public class Search {
 	private int[] prun = new int[6];
 
 	private byte[] f = new byte[54];
+	private int n_probe;
 
 	private int urfIdx;
 	private int depth1;
@@ -48,10 +49,11 @@ public class Search {
 	private int valid1;
 	private int valid2;
 	private String solution;
-	private long timeOut;
-	private long timeMin;
+	private int probeMax;
+	private int probeMin;
 	private int verbose;
 	private CubieCube cc = new CubieCube();
+	boolean recoverable;
 	
 	/**
 	 *     Verbose_Mask determines if a " . " separates the phase1 and phase2 parts of the solver string like in F' R B R L2 F .
@@ -129,17 +131,32 @@ public class Search {
 	 * 		Error 7: No solution exists for the given maxDepth<br>
 	 * 		Error 8: Timeout, no solution within given time
 	 */
-	public synchronized String solution(String facelets, int maxDepth, long timeOut, long timeMin, int verbose) {
+	public synchronized String solution(String facelets, int maxDepth, int probeMax, int probeMin, int verbose) {
 		int check = verify(facelets);
 		if (check != 0) {
 			return "Error " + Math.abs(check);
 		}
 		this.sol = maxDepth+1;
-		this.timeOut = System.currentTimeMillis() + timeOut;
-		this.timeMin = this.timeOut + Math.min(timeMin - timeOut, 0);
+		this.probeMax = probeMax <= 0 ? 0x7fffffff : probeMax;
+		this.probeMin = probeMin;
+		this.n_probe = 0;
 		this.verbose = verbose;
 		this.solution = null;
-		return solve(cc);
+		this.recoverable = false;
+		Tools.init();
+		initState(cc);
+		return solve();
+	}
+	
+	public synchronized String recovery(int probe_plus) {
+		probeMax = n_probe + probe_plus;
+		String lastSolution = solution;
+		solution = null;
+		solve();
+		if (solution == null) {
+			solution = lastSolution;
+		}
+		return solution == null ? "Error 7" : solution;
 	}
 	
 	int verify(String facelets) {
@@ -169,9 +186,8 @@ public class Search {
 		Util.toCubieCube(f, cc);
 		return cc.verify();
 	}
-
-	private String solve(CubieCube c) {
-		Tools.init();
+	
+	private void initState(CubieCube c) {
 		int conjMask = 0;
 		for (int i=0; i<6; i++) {
 			twist[i] = c.getTwistSym();
@@ -195,18 +211,24 @@ public class Search {
 						(flip[i]>>>3) * 495 + CoordCube.UDSliceConj[slice[i]&0x1ff][flip[i]&7])),
 					Tools.USE_TWIST_FLIP_PRUN ? CoordCube.getPruning(CoordCube.TwistFlipPrun, 
 							(twist[i]>>>3) * 2688 + (flip[i] & 0xfff8 | CubieCube.Sym8MultInv[flip[i]&7][twist[i]&7])) : 0);
+			} else {
+				prun[i] = 0x7fffffff;
 			}
 			c.URFConjugate();
 			if (i==2) {
 				c.invCubieCube();
 			}
 		}
-		for (depth1=0; depth1<sol; depth1++) {
+	}
+
+	private String solve() {
+		if (!recoverable) {
+			depth1 = 0;
+			urfIdx = 0;
+		}
+		for (; depth1<sol; depth1++, urfIdx = 0) {
 			maxDep2 = Math.min(12, sol-depth1);
-			for (urfIdx=0; urfIdx<6; urfIdx++) {
-				if ((conjMask & (1 << urfIdx)) != 0) {
-					continue;
-				}
+			for (; urfIdx<6; urfIdx++) {
 				corn[0] = corn0[urfIdx];
 				mid4[0] = slice[urfIdx];
 				ud8e[0] = ud8e0[urfIdx];
@@ -214,6 +236,7 @@ public class Search {
 				if ((prun[urfIdx] <= depth1)
 						&& phase1(twist[urfIdx]>>>3, twist[urfIdx]&7, flip[urfIdx]>>>3, flip[urfIdx]&7,
 							slice[urfIdx]&0x1ff, depth1, -1) == 0) {
+					recoverable = true;
 					return solution == null ? "Error 8" : solution;
 				}
 			}
@@ -237,6 +260,12 @@ public class Search {
 			}
 			for (int power=0; power<3; power++) {
 				int m = axis + power;
+				
+				if (recoverable) {
+					m = move[depth1-maxl];
+					axis = m / 3 * 3;
+					power = m % 3;
+				}
 				
 				int slicex = CoordCube.UDSliceMove[slice][m] & 0x1ff;
 				int twistx = CoordCube.TwistMove[twist][CubieCube.Sym8Move[tsym][m]];
@@ -286,9 +315,11 @@ public class Search {
 	 * 		2: Try Next Axis
 	 */
 	private int initPhase2() {
-		if (System.currentTimeMillis() >= (solution == null ? timeOut : timeMin)) {
+		recoverable = false;
+		if (n_probe >= (solution == null ? probeMax : probeMin)) {
 			return 0;
 		}
+		n_probe++;
 		valid2 = Math.min(valid2, valid1);
 		int cidx = corn[valid1] >>> 4;
 		int csym = corn[valid1] & 0xf;
@@ -339,7 +370,7 @@ public class Search {
 				sol = depth1 + depth2;
 				maxDep2 = Math.min(12, sol-depth1);
 				solution = solutionToString();
-				return System.currentTimeMillis() >= timeMin ? 0 : 1;
+				return n_probe >= probeMin ? 0 : 1;
 			}
 		}
 		return 1;

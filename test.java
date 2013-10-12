@@ -160,6 +160,7 @@ public class test {
 				maxT = Math.max(maxT, curTime);
 				minT = Math.min(minT, curTime);
 //				System.out.println(s);
+//				System.out.println(search.recovery(1000));
 				x++;
 				System.out.print(String.format("AvgTime: %8.3f ms, MaxTime: %8.3f ms, MinTime: %8.3f ms\r", 
 					(totalTime/1000000d)/x, maxT/1000000d, minT/1000000d));
